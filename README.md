@@ -4,6 +4,12 @@
 
 > 窗口用系统自带的 **Edge WebView2** 渲染（和 Edge 同内核，不是 Chromium 套壳），所以桌面 app 本身只有几 MB；Node 运行时已经一起打包，**解压即用，零安装**。
 
+[![最新版本](https://img.shields.io/github/v/release/sv8vkwmfr7-create/agent?label=%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC&color=2294F2)](https://github.com/sv8vkwmfr7-create/agent/releases)
+
+<a href="https://github.com/sv8vkwmfr7-create/agent/releases">
+  <img src="https://img.shields.io/badge/%E4%B8%8B%E8%BD%BD%E6%A1%8C%E9%9D%A2%E7%89%88-2294F2?style=for-the-badge" alt="下载桌面版"/>
+</a>
+
 ---
 
 ## ✨ 特性
