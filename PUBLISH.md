@@ -49,6 +49,35 @@ cd C:\Users\ASYS\dsh-desktop\agent
 
 ---
 
+## 方式 C：免 token 发布（推荐给不想管 token 的人）
+
+适合你已经在 GitHub 网页登录过账号的情况。核心思路：用 **HTTPS 远程地址 + Git 凭据管理器**，第一次 push 时自动弹出 GitHub 登录网页，登录后就能推，**全程不用复制粘贴 token**。
+
+### 一次性准备（你来做）
+1. 在 GitHub 网页新建**空**仓库 `sv8vkwmfr7-create/agent`（不要勾 README / .gitignore，保持完全为空）。
+2. 确认本机装了 Git for Windows（自带 Git Credential Manager）。没装去 https://git-scm.com 下一个。
+
+### 一条命令推代码
+在本机终端（PowerShell 或 Git Bash 都行）执行：
+
+```bash
+cd C:\Users\ASYS\dsh-desktop\agent
+git remote add origin https://github.com/sv8vkwmfr7-create/agent.git
+git push -u origin master
+```
+
+首次 push 会弹浏览器让你登录 GitHub，授权后代码就上去了。之后再次 push 不用再登录。
+
+> 偏好 SSH 的话，把上面 `git remote add` 那行换成：
+> `git remote add origin git@github.com:sv8vkwmfr7-create/agent.git`
+> （需先在 GitHub 账号添加本机 SSH 公钥，一次性设置，之后永免登录）。
+
+### 上传预编译包（手动，免 token）
+进仓库 → **Releases** → **Draft a new release** → Tag 填 `v1.0.0` → 把
+`C:\Users\ASYS\dsh-desktop\DeepSeekHarness-win64.zip` 拖进附件区 → **Publish release**。
+
+---
+
 ## 关于预编译包 `DeepSeekHarness-win64.zip`
 
 - 大小约 **50 MB**，里面已经包含 Node.js 运行时，所以别人「下载 → 解压 → 双击 exe」即可用，零安装。
