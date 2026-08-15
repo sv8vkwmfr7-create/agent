@@ -8,8 +8,12 @@ DeepSeek Harness —— 桌面版启动器
 的全局热键 (默认 Ctrl+Alt+D) 唤起。
 
 特性：
-  * 单实例：重复按热键不会开多个窗口，而是聚焦已存在的窗口。
+  * 单实例：重复按热键会清理残留实例并重启，避免“点了没反应”。
   * 自动按需启动 dsh web 服务；若服务已在运行则直接复用。
+  * 启动前自动校验 npm 缓存；若检测到缓存锁损坏（Lock compromised /
+    ECOMPROMISED）会自动 `npm cache clean --force` 后重试，避免无限超时。
+  * 先弹“加载中”窗口，等服务就绪后再跳转到主界面，消除启动错觉。
+  * 关闭窗口时一并结束我们启动的服务进程，避免遗留僵尸 node。
   * 支持通过本目录下的 .env 文件注入环境变量 (如 DEEPSEEK_API_KEY)。
   * 控制端口 3081 用于实例间通信 (FOCUS / QUIT)。
 
@@ -24,6 +28,7 @@ import time
 import socket
 import subprocess
 import logging
+import threading
 
 # --------------------------------------------------------------------------- #
 # 配置
@@ -63,6 +68,17 @@ ENV_FILE = os.path.join(APP_DIR, ".env")
 # 窗口 / 任务栏图标（DeepSeek 官方蓝鲸）
 ICON_PATH = os.path.join(BASE_DIR, "assets", "deepseek-whale.ico")
 
+
+def npm_cmd_path():
+    c = os.path.join(NODE_DIR, "npm.cmd")
+    if os.path.exists(c):
+        return c
+    c2 = os.path.join(NODE_DIR, "npm")
+    if os.path.exists(c2):
+        return c2
+    return "npm"
+
+
 logging.basicConfig(
     filename=LOG_FILE,
     level=logging.INFO,
@@ -99,8 +115,102 @@ def server_running():
         return False
 
 
+def find_pid_on_port(port):
+    """返回本地监听 `127.0.0.1:port` 的进程 PID，找不到返回 None。"""
+    try:
+        out = subprocess.run(
+            ["netstat", "-ano", "-p", "TCP"],
+            capture_output=True, text=True, timeout=10,
+        ).stdout
+    except Exception as e:  # noqa: BLE001
+        log.warning("netstat 查询端口 %d 失败: %s", port, e)
+        return None
+    target = f"127.0.0.1:{port}"
+    for line in out.splitlines():
+        parts = line.split()
+        # 典型: Proto  LocalAddress  ForeignAddress  State  PID
+        if len(parts) >= 5 and parts[1] == target and parts[3] == "LISTENING":
+            try:
+                return int(parts[4])
+            except ValueError:
+                continue
+    return None
+
+
+def pid_alive(pid):
+    if not pid:
+        return False
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        PROCESS_QUERY_INFORMATION = 0x0400
+        h = kernel32.OpenProcess(PROCESS_QUERY_INFORMATION, False, pid)
+        if h:
+            kernel32.CloseHandle(h)
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
+def kill_pid(pid):
+    if not pid:
+        return False
+    try:
+        subprocess.run(
+            ["taskkill", "/F", "/PID", str(pid)],
+            capture_output=True, timeout=10,
+        )
+        return True
+    except Exception as e:  # noqa: BLE001
+        log.warning("结束进程 PID %d 失败: %s", pid, e)
+        return False
+
+
+def npm_cache_verify():
+    """启动前快速校验 npm 缓存，预防性修复锁损坏。失败不计为致命。"""
+    try:
+        env = dict(os.environ)
+        env["PATH"] = NODE_DIR + os.pathsep + env.get("PATH", "")
+        subprocess.run(
+            [npm_cmd_path(), "cache", "verify"],
+            env=env, capture_output=True, timeout=120,
+        )
+        log.info("npm cache verify 完成。")
+    except Exception as e:  # noqa: BLE001
+        log.warning("npm cache verify 跳过/失败(忽略): %s", e)
+
+
+def npm_cache_heal():
+    """缓存损坏时，强制清理 npm 缓存。返回是否执行成功。"""
+    log.warning("检测到 npm 缓存损坏，尝试 `npm cache clean --force` 修复…")
+    try:
+        env = dict(os.environ)
+        env["PATH"] = NODE_DIR + os.pathsep + env.get("PATH", "")
+        subprocess.run(
+            [npm_cmd_path(), "cache", "clean", "--force"],
+            env=env, capture_output=True, timeout=180,
+        )
+        return True
+    except Exception as e:  # noqa: BLE001
+        log.warning("npm cache clean --force 失败: %s", e)
+        return False
+
+
+def server_log_has_corruption():
+    """读取 dsh-server.log，判断是否为 npm 缓存锁损坏。"""
+    try:
+        with open(SERVER_LOG, "r", encoding="utf-8", errors="ignore") as f:
+            data = f.read()
+        markers = ("Lock compromised", "ECOMPROMISED",
+                   "cache clean", "ENOTSUP", "corrupted")
+        return any(m in data for m in markers)
+    except Exception:
+        return False
+
+
 def start_server():
-    """启动 dsh web 服务（后台、无窗口、日志写入 SERVER_LOG）。"""
+    """启动 dsh web 服务（后台、无窗口、日志写入 SERVER_LOG）。返回 Popen。"""
     env = dict(os.environ)
     # 让 npx / node 在 PATH 中可用
     env["PATH"] = NODE_DIR + os.pathsep + env.get("PATH", "")
@@ -119,7 +229,7 @@ def start_server():
     proc = subprocess.Popen(
         [cmd_exe, "/c", NPX, "-y", "@deepseek-ai/dsh", "web"],
         env=env,
-        cwd=HERE,
+        cwd=APP_DIR,
         stdout=f,
         stderr=f,
         creationflags=flags,
@@ -149,43 +259,142 @@ def notify_master(msg=b"FOCUS"):
         return False
 
 
+LOADING_HTML = """<!doctype html><html><head><meta charset="utf-8"><style>
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  background: #0b1f3a; color: #cfe3ff;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+.spinner {
+  width: 46px; height: 46px; margin-bottom: 18px;
+  border: 5px solid rgba(255,255,255,.18); border-top-color: #4f8cff;
+  border-radius: 50%; animation: spin 1s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+h1 { font-size: 20px; font-weight: 600; margin: 0 0 8px; }
+p { opacity: .7; font-size: 13px; margin: 0; max-width: 320px; text-align: center; line-height: 1.6; }
+</style></head><body>
+  <div class="spinner"></div>
+  <h1>正在启动 DeepSeek Harness…</h1>
+  <p>首次启动需从 npm 拉取 dsh 包，请稍候（最多约 1–2 分钟）。</p>
+</body></html>"""
+
+TIMEOUT_HTML = """<!doctype html><html><head><meta charset="utf-8"><style>
+body{margin:0;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;
+background:#0b1f3a;color:#ffd0d0;font-family:"Segoe UI",system-ui,sans-serif;text-align:center;padding:24px}
+h1{font-size:20px;margin:0 0 10px} p{opacity:.85;font-size:13px;max-width:420px;line-height:1.7}
+code{background:rgba(255,255,255,.1);padding:2px 6px;border-radius:4px}
+</style></head><body>
+<h1>服务启动超时</h1>
+<p>dsh web 服务未能在预期时间内就绪。常见原因：<br>
+1) 首次启动需要联网从 npm 拉取 dsh 包；<br>
+2) npm 缓存锁损坏。可尝试在命令行执行 <code>npm cache clean --force</code> 后重新打开本程序。<br>
+详细错误见同目录下的 <code>dsh-server.log</code>。</p>
+</body></html>"""
+
+
 # --------------------------------------------------------------------------- #
 # 主流程
 # --------------------------------------------------------------------------- #
 def main():
+    # 1) 清理可能残留的僵尸主实例：控制端口 3081 被死进程占着会导致“点击无反应”。
+    owner = find_pid_on_port(CTRL_PORT)
+    if owner is not None:
+        if pid_alive(owner):
+            # 真有活着的实例占用端口，先尝试优雅退出让它重生
+            log.info("控制端口被运行中实例 PID %d 占用，发送 QUIT 后重启。", owner)
+            notify_master(b"QUIT")
+            for _ in range(10):
+                if find_pid_on_port(CTRL_PORT) is None:
+                    break
+                time.sleep(0.5)
+        else:
+            log.warning("控制端口被死进程 PID %d 占用，清理中。", owner)
+        still = find_pid_on_port(CTRL_PORT)
+        if still is not None:
+            log.warning("旧实例未退出 (PID %d)，强制结束。", still)
+            kill_pid(still)
+
     master = become_master()
     if master is None:
-        # 已有实例：发送聚焦请求后退出
-        log.info("检测到已有实例，发送 FOCUS。")
+        log.info("成为主实例失败，发送 FOCUS 退化处理。")
         notify_master(b"FOCUS")
         return
-
-    # 确保服务运行
-    started_here = False
-    if not server_running():
-        start_server()
-        started_here = True
-
-    deadline = time.time() + 180
-    while not server_running():
-        if time.time() > deadline:
-            log.error("服务在超时时间内未启动，请查看 %s", SERVER_LOG)
-            return
-        time.sleep(1)
-    log.info("dsh web 已就绪: http://%s:%d", DSH_HOST, DSH_PORT)
 
     import webview
 
     running = [True]
+    state = {"started_here": False, "proc": None}
+
+    # 先弹“加载中”窗口，避免点了像没反应
     window = webview.create_window(
         "DeepSeek Harness",
-        url=f"http://{DSH_HOST}:{DSH_PORT}",
+        html=LOADING_HTML,
         width=1366,
         height=768,
     )
 
+    def launch_server():
+        """按需启动服务（已运行则复用）；端口被僵尸占着则先清。"""
+        if not server_running():
+            srv_pid = find_pid_on_port(DSH_PORT)
+            if srv_pid and not server_running():
+                log.warning("端口 %d 被 PID %d 占用但服务无响应，清理中。",
+                            DSH_PORT, srv_pid)
+                kill_pid(srv_pid)
+            state["proc"] = start_server()
+            state["started_here"] = True
+
+    def wait_ready(timeout=180):
+        deadline = time.time() + timeout
+        while not server_running():
+            if time.time() > deadline:
+                return False
+            time.sleep(1)
+        return True
+
+    def bootstrap():
+        """后台线程：校验缓存 → 启动 → 等待；损坏则自愈重试。"""
+        try:
+            npm_cache_verify()
+        except Exception:  # noqa: BLE001
+            pass
+
+        launch_server()
+
+        if not wait_ready():
+            # 首次未就绪：若日志显示缓存损坏，自动修复后重试一次
+            if server_log_has_corruption():
+                log.warning("服务未就绪且疑似 npm 缓存损坏，准备自愈重试。")
+                if state["proc"] is not None:
+                    try:
+                        state["proc"].kill()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    state["proc"] = None
+                    state["started_here"] = False
+                npm_cache_heal()
+                launch_server()
+                wait_ready()
+
+        if server_running():
+            try:
+                window.load_url(f"http://{DSH_HOST}:{DSH_PORT}")
+                log.info("dsh web 已就绪: http://%s:%d", DSH_HOST, DSH_PORT)
+            except Exception as e:  # noqa: BLE001
+                log.warning("跳转到主界面失败: %s", e)
+        else:
+            try:
+                window.load_html(TIMEOUT_HTML)
+            except Exception:  # noqa: BLE001
+                pass
+
+    threading.Thread(target=bootstrap, daemon=True).start()
+
     def on_loaded():
-        """在 pywebview 后台线程中监听控制端口。"""
+        """窗口加载完成后监听控制端口（FOCUS / QUIT）。"""
         master.settimeout(1.0)
         while running[0]:
             try:
@@ -222,8 +431,17 @@ def main():
         )
     finally:
         running[0] = False
+        # 若服务是我们启动的，关闭窗口时一并结束，避免遗留僵尸 node 进程。
+        if state["started_here"] and state["proc"] is not None:
+            try:
+                state["proc"].terminate()
+                try:
+                    state["proc"].wait(timeout=5)
+                except Exception:  # noqa: BLE001
+                    state["proc"].kill()
+            except Exception as e:  # noqa: BLE001
+                log.warning("终止 dsh web 服务失败: %s", e)
         log.info("窗口已关闭，退出桌面版。")
-        # 若服务是我们启动的，可选择一并终止。为方便复用，这里保留服务进程。
 
 
 if __name__ == "__main__":
