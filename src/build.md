@@ -9,7 +9,7 @@
 ## 1. 环境要求
 
 - **Windows 10/11**（需要 Edge WebView2，Win10 21H2+ 一般已自带；没有的话去微软官网装 "Microsoft Edge WebView2 Runtime"）。
-- **Python 3.13**（建议用 3.13.x）。
+- **Python 3.13+/3.14**（v1.0.1 用 3.14.6 构建，需 pythonnet 3.1+ 支持）。
 - **Node.js 22+**（打包进 exe 的那份 Node 就是 22.22.2）。
 - 能访问 npm 源（首次启动会从 npm 拉 `@deepseek-ai/dsh`）。
 

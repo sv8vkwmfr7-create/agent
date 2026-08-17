@@ -23,7 +23,7 @@ cd C:\Users\ASYS\dsh-desktop\agent
 脚本会自动完成：
 1. 创建仓库 `sv8vkwmfr7-create/agent`（若已存在则跳过）；
 2. 推送全部代码（`master` 分支）；
-3. 创建 Release `v1.0.0`；
+3. 创建 Release `v1.0.1`；
 4. 上传 `DeepSeekHarness-win64.zip` 作为下载附件。
 
 > Token 只在命令里用一次，不会写入任何文件。用完可在 GitHub 撤销该 token。
@@ -43,8 +43,8 @@ cd C:\Users\ASYS\dsh-desktop\agent
    ```
 
 3. 在仓库页面 → **Releases** → **Draft a new release**：
-   - Tag: `v1.0.0`
-   - Title: `DeepSeek Harness 桌面版 v1.0.0`
+   - Tag: `v1.0.1`
+   - Title: `DeepSeek Harness 桌面版 v1.0.1`
    - 把 `C:\Users\ASYS\dsh-desktop\DeepSeekHarness-win64.zip` 拖到附件区 → **Publish release**。
 
 ---
@@ -73,14 +73,14 @@ git push -u origin master
 > （需先在 GitHub 账号添加本机 SSH 公钥，一次性设置，之后永免登录）。
 
 ### 上传预编译包（手动，免 token）
-进仓库 → **Releases** → **Draft a new release** → Tag 填 `v1.0.0` → 把
+进仓库 → **Releases** → **Draft a new release** → Tag 填 `v1.0.1` → 把
 `C:\Users\ASYS\dsh-desktop\DeepSeekHarness-win64.zip` 拖进附件区 → **Publish release**。
 
 ---
 
 ## 关于预编译包 `DeepSeekHarness-win64.zip`
 
-- 大小约 **50 MB**，里面已经包含 Node.js 运行时，所以别人「下载 → 解压 → 双击 exe」即可用，零安装。
+- 大小约 **134 MB**（v1.0.1 起内置 dsh 应用依赖），里面已经包含 Node.js 运行时与 dsh 本体，所以别人「下载 → 解压 → 双击 exe」即可用，零安装、零联网。
 - 它**不在 git 仓库内**（仓库只放源码和小体积资源），而是作为 GitHub Release 的附件提供，这样下载最方便、仓库也干净。
 - 路径：`C:\Users\ASYS\dsh-desktop\DeepSeekHarness-win64.zip`。
 
