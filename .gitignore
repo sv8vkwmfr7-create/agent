@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.spec
+
+# PyInstaller
+build/
+dist/
+DeepSeekHarness/_internal/
+DeepSeekHarness/app/
+DeepSeekHarness/node/
+DeepSeekHarness/assets/
+DeepSeekHarness/*.exe
+
+# Logs
+*.log
+dsh-server.log
+
+# Environment
+.env
+
+# Version cache
+.dsh-version-cache
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Old backups
+zz_*/
+_old_*/
+_*_backup/
+_*result*.txt
+_*test*/
+_*.txt
+
+# Node
+node_modules/
+*.exe

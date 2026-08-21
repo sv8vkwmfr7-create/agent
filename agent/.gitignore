@@ -1,0 +1,12 @@
+# 日志
+*.log
+
+# Python
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
+
+# 本地环境
+.env
