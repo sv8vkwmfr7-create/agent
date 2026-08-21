@@ -23,7 +23,7 @@ cd C:\Users\ASYS\dsh-desktop\agent
 脚本会自动完成：
 1. 创建仓库 `sv8vkwmfr7-create/agent`（若已存在则跳过）；
 2. 推送全部代码（`master` 分支）；
-3. 创建 Release `v1.0.1`；
+3. 创建 Release `v1.0.3`；
 4. 上传 `DeepSeekHarness-win64.zip` 作为下载附件。
 
 > Token 只在命令里用一次，不会写入任何文件。用完可在 GitHub 撤销该 token。
@@ -43,8 +43,8 @@ cd C:\Users\ASYS\dsh-desktop\agent
    ```
 
 3. 在仓库页面 → **Releases** → **Draft a new release**：
-   - Tag: `v1.0.1`
-   - Title: `DeepSeek Harness 桌面版 v1.0.1`
+   - Tag: `v1.0.3`
+   - Title: `DeepSeek Harness 桌面版 v1.0.3`
    - 把 `C:\Users\ASYS\dsh-desktop\DeepSeekHarness-win64.zip` 拖到附件区 → **Publish release**。
 
 ---

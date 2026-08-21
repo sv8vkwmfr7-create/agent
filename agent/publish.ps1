@@ -17,8 +17,8 @@ param(
     [string]$RepoName  = "agent",
     [string]$Branch    = "master",
     [string]$ZipPath   = "..\DeepSeekHarness-win64.zip",
-    [string]$TagName   = "v1.0.0",
-    [string]$ReleaseName = "DeepSeek Harness 桌面版 v1.0.0"
+    [string]$TagName   = "v1.0.3",
+    [string]$ReleaseName = "DeepSeek Harness 桌面版 v1.0.3"
 )
 
 $ErrorActionPreference = "Stop"
@@ -42,7 +42,7 @@ try {
         Write-Host "[1/4] 仓库不存在，正在创建 $full ..."
         $body = @{
             name        = $RepoName
-            description = "DeepSeek Harness 桌面版（Windows）— 蓝鲸图标 + Ctrl+Alt+D 快捷键，自带 Node，解压即用"
+            description = "DeepSeek Harness 桌面版（Windows）— 蓝鲸图标 + Ctrl+Alt+D 快捷键，自带 Node，解压即用，自动更新"
             private     = $false
         } | ConvertTo-Json
         Invoke-RestMethod -Uri "$api/user/repos" -Headers $headers -Method Post -Body $body -ContentType "application/json" | Out-Null
