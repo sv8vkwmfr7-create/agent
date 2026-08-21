@@ -35,6 +35,8 @@ DeepSeek Harness —— 桌面版启动器
 import os
 import sys
 import time
+import json
+import datetime
 import socket
 import subprocess
 import logging
@@ -88,6 +90,64 @@ ENV_FILE = os.path.join(APP_DIR, ".env")
 ICON_PATH = os.path.join(BASE_DIR, "assets", "deepseek-whale.ico")
 APP_NODE_MODULES = os.path.join(APP_DIR, "app", "node_modules")
 LOCAL_DSH_PKG = os.path.join(APP_NODE_MODULES, "@deepseek-ai", "dsh")
+VER_CACHE_FILE = os.path.join(APP_DIR, ".dsh-version-cache")
+# 版本缓存有效期：24 小时内不重复检查，避免每次启动都联网
+VER_CACHE_TTL = 24 * 3600
+
+
+def get_bundled_version():
+    """读取本地 bundled dsh 版本号，失败返回 None。"""
+    try:
+        pkg = os.path.join(LOCAL_DSH_PKG, "package.json")
+        with open(pkg, encoding="utf-8") as f:
+            return json.load(f).get("version")
+    except Exception:
+        return None
+
+
+def _read_ver_cache():
+    """读取缓存的版本检查结果，返回 (cached_version, ts) 或 (None, 0)。"""
+    try:
+        with open(VER_CACHE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data.get("version"), data.get("ts", 0)
+    except Exception:
+        return None, 0
+
+
+def _write_ver_cache(version):
+    """写入版本检查缓存。"""
+    try:
+        with open(VER_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump({"version": version, "ts": time.time()}, f)
+    except Exception:
+        pass
+
+
+def check_npm_version(timeout=10):
+    """后台查询 npm 上 @deepseek-ai/dsh latest 版本，超时返回 None。
+
+    优先读缓存（24h 内不重复查），减少启动时的网络请求。
+    """
+    cached_ver, cached_ts = _read_ver_cache()
+    if cached_ver and (time.time() - cached_ts) < VER_CACHE_TTL:
+        log.info("版本检查命中缓存: %s (ts=%d)", cached_ver, cached_ts)
+        return cached_ver
+    try:
+        env = dict(os.environ)
+        env["PATH"] = NODE_DIR + os.pathsep + env.get("PATH", "")
+        out = run_hidden(
+            [npm_cmd_path(), "view", "@deepseek-ai/dsh", "version"],
+            env=env, capture_output=True, text=True, timeout=timeout,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            ver = out.stdout.strip()
+            _write_ver_cache(ver)
+            log.info("npm view 最新版本: %s", ver)
+            return ver
+    except Exception as e:
+        log.warning("npm view 版本检查失败(忽略): %s", e)
+    return None
 
 
 def npm_cmd_path():
@@ -418,6 +478,81 @@ p {{ opacity: .75; font-size: 13px; margin: 0; max-width: 360px; text-align: cen
 </body></html>"""
 
 
+def update_html(current_ver, latest_ver):
+    """发现新版本时替换加载页，展示更新提示。"""
+    return f"""<!doctype html><html><head><meta charset="utf-8"><style>
+* {{ box-sizing: border-box; }}
+html, body {{ margin: 0; height: 100%; }}
+body {{
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  background: #0b1f3a; color: #cfe3ff;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif; text-align: center;
+}}
+.logo {{ font-size: 48px; margin-bottom: 12px; }}
+h1 {{ font-size: 20px; font-weight: 600; margin: 0 0 6px; }}
+.ver {{ font-size: 13px; opacity: .6; margin: 0 0 20px; }}
+.ver span {{ color: #4f8cff; font-weight: 600; }}
+.actions {{ display: flex; gap: 12px; margin-top: 4px; }}
+button {{
+  font-size: 14px; padding: 10px 20px; border: 0; border-radius: 8px; cursor: pointer;
+  font-weight: 600; transition: opacity .15s;
+}}
+.btn-update {{ background: #4f8cff; color: #fff; }}
+.btn-update:hover {{ background: #3f7bef; }}
+.btn-update:disabled {{ opacity: .5; cursor: not-allowed; }}
+.btn-skip {{ background: rgba(255,255,255,.12); color: #cfe3ff; }}
+.btn-skip:hover {{ background: rgba(255,255,255,.2); }}
+.status {{ margin-top: 16px; font-size: 12px; opacity: .7; min-height: 18px; }}
+</style></head><body>
+  <div class="logo">&#x1F40B;</div>
+  <h1>发现新版本</h1>
+  <p class="ver">当前 <span>{current_ver}</span> &rarr; 最新 <span>{latest_ver}</span></p>
+  <div class="actions">
+    <button class="btn-update" id="btn-update" onclick="pywebview.api.auto_update()">更新引擎</button>
+    <button class="btn-skip" onclick="pywebview.api.skip_update()">跳过</button>
+  </div>
+  <p class="status" id="status"></p>
+  <script>
+  function setStatus(msg) {{
+    var el = document.getElementById('status');
+    if (el) el.textContent = msg;
+  }}
+  function setUpdating() {{
+    var btn = document.getElementById('btn-update');
+    if (btn) {{ btn.textContent = '更新中…'; btn.disabled = true; }}
+  }}
+  function setDone() {{
+    var btn = document.getElementById('btn-update');
+    if (btn) {{ btn.textContent = '&#x2705; 已更新，重启中…'; btn.disabled = true; }}
+  }}
+  </script>
+</body></html>"""
+
+
+def update_fail_html(reason=""):
+    """更新失败时展示错误。"""
+    return f"""<!doctype html><html><head><meta charset="utf-8"><style>
+* {{ box-sizing: border-box; }}
+html, body {{ margin: 0; height: 100%; }}
+body {{
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  background: #0b1f3a; color: #ffd0d0;
+  font-family: "Segoe UI", system-ui, sans-serif; text-align: center; padding: 24px;
+}}
+h1 {{ font-size: 20px; margin: 0 0 10px; }}
+p {{ opacity: .85; font-size: 13px; max-width: 440px; line-height: 1.7; margin: 0 0 18px; }}
+button {{ font-size: 14px; padding: 10px 18px; border: 0; border-radius: 8px; cursor: pointer;
+background: #4f8cff; color: #fff; font-weight: 600; }}
+button:hover {{ background: #3f7bef; }}
+</style></head><body>
+  <h1>更新失败</h1>
+  <p>npm install 未能完成。请检查网络后重试，或手动执行：<br>
+  <code>cd app && npm install</code></p>
+  <p style="font-size:11px;opacity:.5">{reason}</p>
+  <button onclick="pywebview.api.skip_update()">跳过，继续启动</button>
+</body></html>"""
+
+
 def error_html():
     return """<!doctype html><html><head><meta charset="utf-8"><style>
 body{margin:0;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;
@@ -439,11 +574,64 @@ button:hover{background:#3f7bef}
 
 
 class JsApi:
+    def __init__(self):
+        self._update_event = None   # threading.Event: set when update is done
+        self._update_ok = False     # whether update succeeded
+        self._update_error = ""     # error message if failed
+        self._skip_update = False   # user skipped
+        self._updating = False      # update in progress
+
     def open_log_folder(self):
         try:
             os.startfile(APP_DIR)
         except Exception as e:  # noqa: BLEUIDE
             log.warning("打开日志目录失败: %s", e)
+
+    def auto_update(self):
+        """前端点击更新按钮后调用，后台 npm install 最新版。"""
+        if self._updating:
+            return
+        self._updating = True
+        threading.Thread(target=self._do_update, daemon=True).start()
+
+    def _do_update(self):
+        """执行 npm install 更新 dsh 引擎。"""
+        try:
+            log.info("用户触发自动更新，开始 npm install…")
+            env = dict(os.environ)
+            env["PATH"] = NODE_DIR + os.pathsep + env.get("PATH", "")
+            app_dir = os.path.join(APP_DIR, "app")
+            proc = subprocess.run(
+                [npm_cmd_path(), "install", "--no-audit", "--no-fund"],
+                env=env, cwd=app_dir,
+                capture_output=True, text=True,
+                creationflags=_NO_WINDOW_FLAGS,
+                timeout=300,
+            )
+            if proc.returncode == 0:
+                log.info("npm install 成功，dsh 引擎已更新。")
+                self._update_ok = True
+                # 清除缓存，下次启动重新检查
+                try:
+                    os.remove(VER_CACHE_FILE)
+                except OSError:
+                    pass
+            else:
+                self._update_error = proc.stderr[:500] if proc.stderr else "exit code {}".format(proc.returncode)
+                log.warning("npm install 失败: %s", self._update_error)
+        except Exception as e:
+            self._update_error = str(e)[:500]
+            log.warning("自动更新异常: %s", e)
+        finally:
+            self._updating = False
+            if self._update_event:
+                self._update_event.set()
+
+    def skip_update(self):
+        """用户跳过更新，直接进入主界面。"""
+        self._skip_update = True
+        if self._update_event:
+            self._update_event.set()
 
 
 # --------------------------------------------------------------------------- #
@@ -508,6 +696,7 @@ def main():
 
     running = [True]
     state = {"started_here": False, "proc": None, "label": ""}
+    js_api = JsApi()
 
     # 先决定模式（无需起服务即可判断），用于加载文案
     _cmd0, _label0, needs_network = resolve_dsh()
@@ -516,7 +705,7 @@ def main():
         html=loading_html(needs_network),
         width=1366,
         height=768,
-        js_api=JsApi(),
+        js_api=js_api,
     )
 
     def launch_server(state):
@@ -547,6 +736,60 @@ def main():
         except Exception as e:  # noqa: BLE001
             log.warning("跳转到主界面失败: %s", e)
 
+    def bg_check_update(js_api, window):
+        """后台线程：检查 npm 最新版本，有更新则显示提示。"""
+        try:
+            current = get_bundled_version()
+            latest = check_npm_version(timeout=10)
+            if not current or not latest:
+                return
+            if current == latest:
+                return  # 已是最新，静默
+            log.info("发现新版本: 当前 %s → 最新 %s", current, latest)
+            # 切换到更新提示页
+            try:
+                window.load_html(update_html(current, latest))
+            except Exception:
+                pass
+            # 等待用户操作：更新 / 跳过
+            js_api._update_event.wait(timeout=600)
+            if js_api._update_ok:
+                # 更新成功 → 重启服务
+                log.info("更新完成，重启 dsh 服务…")
+                try:
+                    window.evaluate_js("setDone()")
+                except Exception:
+                    pass
+                time.sleep(1.5)
+                # 杀掉旧服务进程
+                srv_pid = find_pid_on_port(DSH_PORT)
+                if srv_pid:
+                    kill_pid(srv_pid)
+                time.sleep(1)
+                launch_server(state)
+                if wait_ready(180):
+                    goto_main()
+                else:
+                    try:
+                        window.load_html(error_html())
+                    except Exception:
+                        pass
+            elif js_api._update_error:
+                # 更新失败 → 展示错误页
+                try:
+                    window.load_html(update_fail_html(js_api._update_error))
+                except Exception:
+                    pass
+                # 等待用户跳过
+                js_api._update_event.clear()
+                js_api._update_event.wait(timeout=600)
+                goto_main()
+            else:
+                # 用户跳过
+                goto_main()
+        except Exception as e:
+            log.warning("后台更新检查异常(忽略): %s", e)
+
     def bootstrap():
         """后台线程：服务已运行则秒开复用；本地模式跳过 npm 校验（省 ~10s）；
         启动 → 等待；损坏则自愈重试；再失败给可见错误。"""
@@ -556,8 +799,13 @@ def main():
             goto_main()
             return
 
-        # npm 缓存校验仅在 npx 联网模式有意义；本地模式不碰 npm 缓存，跳过
-        if needs_network:
+        # 并行：启动服务 + 后台检查更新（不阻塞启动）
+        # 更新检查在后台线程，不影响服务启动速度
+        if local_dsh_present() and not needs_network:
+            js_api._update_event = threading.Event()
+            threading.Thread(target=bg_check_update, args=(js_api, window), daemon=True).start()
+        else:
+            # npx 联网模式：启动前校验 npm 缓存
             try:
                 npm_cache_verify()
             except Exception:  # noqa: BLE001
