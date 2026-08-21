@@ -89,6 +89,13 @@ dsh web 服务日志：`DeepSeekHarness/dsh-server.log`
 
 ## 📋 更新日志
 
+### v1.0.2（2026-08-21）
+
+- 🐳 **dsh 引擎升级**：内置 `@deepseek-ai/dsh` 从 `0.1.0-rc.6` → `0.1.1-rc.1`
+- 🆕 新增 PowerShell 持久化工具 (`dsh-tool-pwsh-persistent`)
+- ⚡ agent preset 配置更新（minimal/cordis/code/standard）
+- 📝 editing-cordis-compositions skill 增强
+
 ### v1.0.1（2026-08-17）
 
 - 📡 **离线启动**：dsh 应用本体随包分发，不再依赖系统 Node/npm 版本与网络
